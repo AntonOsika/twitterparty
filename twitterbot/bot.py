@@ -16,6 +16,7 @@ import time
 import re
 import random
 import cPickle as pickle
+import sys
 
 from httplib import IncompleteRead
 
@@ -52,7 +53,7 @@ class TwitterBot:
 
         self.config['ignore_timeline_mentions'] = True
 
-        self.config['logging_level'] = logging.DEBUG
+        self.config['logging_level'] = logging.INFO  #the level to save to
         self.config['storage'] = FileStorage()
 
         self.state = {}
@@ -70,7 +71,6 @@ class TwitterBot:
         logging.basicConfig(format='%(asctime)s | %(levelname)s: %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', 
             filename=self.screen_name + '.log',
             level=self.config['logging_level'])
-
         logging.info('Initializing bot...')
 
         try:
@@ -113,6 +113,7 @@ class TwitterBot:
             logging.error(message)
         else:
             logging.info(message)
+        print(message)
 
 
     def _log_tweepy_error(self, message, e):
