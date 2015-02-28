@@ -32,7 +32,7 @@ class TwitterParty(TwitterBot):
         ######################################
 
         # how often to tweet, in seconds
-        self.config['tweet_interval'] = 15 * 60     # default: 30 minutes
+        self.config['tweet_interval'] = 1 * 60     # default: 30 minutes
 
         # use this to define a (min, max) random range of how often to tweet
         # e.g., self.config['tweet_interval_range'] = (5*60, 10*60) # tweets every 5-10 minutes
@@ -135,10 +135,10 @@ class TwitterParty(TwitterBot):
         if hasattr(user, 'status'):
             try:
                 self.api.create_favorite(user.status.id)
-                self.log('Actually created favorite in add_person(), adding @%s:s tweet:\n%s' % (user.screen_name, user.status.text))
+                self.log('Adding @%s AND favoriting tweet in add_person():\n%s' % (user.screen_name, user.status.text))
             except: pass
         else:
-            self.log('Adding @%s, but User has no .status object to favorite.' % user.screen_name)
+            self.log('Adding @%s in add_person(), but User has no .status object to favorite.' % user.screen_name)
         try:
             self.api.create_friendship(user.id)
         except: 
@@ -202,7 +202,10 @@ class TwitterParty(TwitterBot):
     def clean_tweet(self, text, recipent):
         words = text.split()
         mention = '@' + recipent.screen_name + ' hi :),'
-        name = '@' + recipent.screen_name 
+        if 'hi' in text.lower():
+            mention = '@' + recipent.screen_name 
+        name = '@' + recipent.screen_name
+        insertFirst = True
 
         for i in range(len(words)):
             if '@' in words[i]:
@@ -212,7 +215,7 @@ class TwitterParty(TwitterBot):
                 else:
                     words[i] = name
                 if mention != '':
-                    mention = 'Hi,' # Will only replace on the first mention.
+                    mention = 'Hi,' # Will only replace on the first mention
                 name = ''
             if 'thora' in words[i].lower():
                 words[i] = recipent.name.split()[0]
@@ -223,36 +226,51 @@ class TwitterParty(TwitterBot):
         return cleaned.replace('&amp;', '&')
 
     def bump(self, ID):
-        user = self.api.get_user(d)
+        """takes ID of user to bump"""
+        try:
+            user = self.api.get_user(ID)
+        except:
+            return
         self.log('Bumping %s' % (user.screen_name))
 
         text=self.clean_tweet("hi. I just wanted to start a random conversation with you. <3.", user)
 
         #Try to send as a reply to last message.
-        if d in self.state['received']:
-            lastTweet = self.api.update_status(status=text, in_reply_to_status_id=self.state['received'][d])
+        if ID in self.state['recieved']:
+            lastTweet = self.api.update_status(status=text, in_reply_to_status_id=self.state['recieved'][ID])
         else:
-            lastTweet = self.api.update_status(status=text)
+            try:
+                lastTweet = self.api.update_status(status=text)
+                self.state['recieved'][ID] = lastTweet.id
 
-        self.state['received'][ID] = lastTweet.id
+            except:
+                self.log('Could not duplicate bump to @%s, failed' % user.screen_name)
 
 
-        recpientID = self.state['people'][ID]
-        recipent = self.api.get_user(recipentID)
 
-        text = self.clean_tweet(self.random_reply(), recipent)
-        self.log('Thanking @%s for tweet that got no reply with: %s' % (recipent.screen_name, text))
-        self.api.create_favorite(self.state['reply_to'][ID])
+        recipentID = self.state['people'][ID]
+        try:
+            recipent = self.api.get_user(recipentID)
 
-        lastTweet = self.api.update_status(status=text[0:140], in_reply_to_status_id=self.state['reply_to'][ID])
 
-        self.state['recieved'][recipentID] = lastTweet.id
+            text = self.clean_tweet(self.random_reply(), recipent)
+            self.log('Thanking @%s for tweet that got no reply with: %s' % (recipent.screen_name, text))
+            self.api.create_favorite(self.state['reply_to'].get(ID))
 
+            lastTweet = self.api.update_status(status=text[0:140], in_reply_to_status_id=self.state['reply_to'][ID])
+
+            self.state['recieved'][recipentID] = lastTweet.id
+        except:
+            pass
 
     def find_matches(self):
 
         def ok_tweet(tweet):
             #No api calls used
+            if tweet == []:
+                return False
+            if isinstance(tweet, list):
+                tweet = tweet[0]
             if tweet.author.lang != 'en':
                 return False
             #if tweet.author.possibly_sensitive:
@@ -269,11 +287,10 @@ class TwitterParty(TwitterBot):
                 return False
             if tweet.author.id in self.state['people']:
                 return False
-            if tweet.author.followers_count > 700:
+            if tweet.author.followers_count > 1500:
                 return False
             if tweet.author.friends_count > 1100:
                 return False
-
             return True
 
         def ok_user(user):
@@ -292,7 +309,7 @@ class TwitterParty(TwitterBot):
                 return False
             if user.statuses_count < 12:
                 return False
-            if user.followers_count > 500:
+            if user.followers_count > 1500:
                 return False
             if user.friends_count > 1100:
                 return False
@@ -308,35 +325,62 @@ class TwitterParty(TwitterBot):
 
 
         #returns tweets. Maximum 15
-        questions = [[x for x in self.api.search(q, 'en') if ok_tweet(x)] for q in queries]
+        #questions is a list of results for each query
+        questions = [[x for x in self.api.search(q, 'en')] for q in queries]
+
+        #API Rate here is limited to 60 per 15 min. danger.
+        #FIX: Retweet is a list of empty lists
+        #import pdb;pdb.set_trace()
+
+        #retweets are now a list of lists for each search. With many retweets for each search.
+
+        questions = map(lambda l: list(filter(ok_tweet, l)), questions)
 
 
-        userqueries = [choice(self.wisdom), choice(self.names), choice(self.top_names), choice(self.words)]
+        userqueries = [choice(self.wisdom), choice(self.hashtags), choice(self.names), choice(self.top_names), choice(self.words)]
 
 
-        users = [[x.author for x in self.api.search(uq) if ok_user(x.author)]
+        users = [[x for x in self.api.search(uq) if ok_tweet(x)]
                 for uq in userqueries]
 
         self.log('%s OK questions for "%s"' % (
                 ', '.join([str(len(x)) for x in questions]), '", "'.join(queries)))
         self.log('%s OK users for "%s"' % (
             ', '.join([str(len(x)) for x in users]), '", "'.join(userqueries)))
+        
 
-        return sum(users,[]), sum(questions,[])
+        # retweets = [[[t for t in self.api.retweets(x.id, 5) if ok_tweet(t)] for x in q] for q in questions]
+
+        # self.log('%s OK retweets for "%s"' % (
+        #     ', '.join([str(len(filter(lambda a: len(a)>0, x))) for x in retweets]), '", "'.join(queries)))
+
+        # nq = sum(map(len,questions))
+        # nu = sum(map(len,users))
+
+        # #Each l is a list of retweet-lists for each tweet. Just take the first.
+        # for l in retweets:
+        #     new = [x[0] for x in l if len(x) > 0]
+
+        #     if nq > nu:
+        #         nu += len(new)
+        #         users += [new]
+        #     else:
+        #         nq += len(new)
+        #         questions += [new]
+        return map(lambda status: status.author, it.chain.from_iterable(users)), it.chain.from_iterable(questions)
 
 
     def remove_old(self):
-        d = self.state['conversations'].popleft()
-        if self.state['counter'][d] > 0:
-            self.state['counter'][d] -= 1
+        ID = self.state['conversations'].popleft() # = None? Conversations is empty queue.
+        if self.state['counter'][ID] > 0:
+            self.state['counter'][ID] -= 1
             #This person was added because he should reply. Did not reply. Send one more tweet before removing:
-        elif self.state['counter'][d] == 0:
-            self.state['conversations'].append(d)
-            self.state['counter'][d] -= 1
-            self.bump(d)
-
-        else:
-            self.remove_person(d)
+        elif self.state['counter'][ID] == 0:
+            self.state['conversations'].append(ID)
+            self.state['counter'][ID] -= 1
+            self.bump(ID)
+        else: #counter == -1
+            self.remove_person(ID)
 
 
     def on_scheduled_tweet(self):
@@ -370,6 +414,7 @@ class TwitterParty(TwitterBot):
                     self.state['recieved'][user.id] = lastTweet.id
                 except:
                     pass
+                self.log('')
                 time.sleep(6)
 
 
@@ -388,7 +433,7 @@ class TwitterParty(TwitterBot):
 
     def on_mention(self, tweet, prefix):
         """
-        Defines actions to take when a mention is received.
+        Defines actions to take when a mention is recieved.
 
         tweet - a tweepy.Status object. You can access the text with
         tweet.text
@@ -403,8 +448,8 @@ class TwitterParty(TwitterBot):
         When calling post_tweet, you MUST include reply_to=tweet, or
         Twitter won't count it as a reply.
         """
-
-        self.reply(tweet, prefix)
+        if tweet.author.screen_name.lower() != 'spiritLaunch':
+            self.reply(tweet, prefix)
 
 
     def on_timeline(self, tweet, prefix):
